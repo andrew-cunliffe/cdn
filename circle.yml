@@ -22,7 +22,7 @@ jobs:
       - run:
           name: Create or update CloudFront distribution
           command: |
-            sed -i 's|{{ DEPLOY_CERT }}|'${DEPLOY_CERT}'|g' .aws/config/cloudfront.json
+            sed -i 's|{{ DEPLOY_URI }}|'${DEPLOY_URI}'|g' .aws/config/cloudfront.json
             sed -i 's|{{ DEPLOY_STACK }}|'${DEPLOY_STACK}-s3'|g' .aws/config/cloudfront.json
             (aws cloudformation create-stack --stack-name "${DEPLOY_STACK}-cloudfront" --template-body "file://.aws/templates/cloudfront.template" --parameters "file://.aws/config/cloudfront.json" --region eu-west-1 \
                 && aws cloudformation wait stack-create-complete --stack-name "${DEPLOY_STACK}-cloudfront" --region eu-west-1) \
@@ -39,10 +39,10 @@ jobs:
 
 workflows:
   version: 2
-
   deploy:
     jobs:
       - deploy:
+          context: cdn-production
 #          filters:
 #            branches:
 #              only: /^(master)$/
