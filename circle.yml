@@ -1,0 +1,48 @@
+version: 2
+
+jobs:
+  deploy:
+    docker:
+      - image: circleci/node:10
+    steps:
+      - checkout
+      - run: sudo apt-get update
+      - run: sudo apt-get install python3 python3-pip
+      - run: sudo pip3 install awscli --upgrade
+      - run:
+          name: Create or update S3 bucket
+          command: |
+            sed -i 's|{{ DEPLOY_URI }}|'${DEPLOY_URI}'|g' .aws/config/s3.json
+            (aws cloudformation create-stack --stack-name "${DEPLOY_STACK}-s3" --template-body "file://.aws/templates/s3.template" --parameters "file://.aws/config/s3.json" --region us-east-1 \
+                && aws cloudformation wait stack-create-complete --stack-name "${DEPLOY_STACK}-s3" --region us-east-1) \
+            || (aws cloudformation update-stack --stack-name "${DEPLOY_STACK}-s3" --template-body "file://.aws/templates/s3.template" --parameters "file://.aws/config/s3.json" --region us-east-1 \
+                && aws cloudformation wait stack-update-complete --stack-name "${DEPLOY_STACK}-s3" --region us-east-1) \
+            || echo "SKIPPING create & update of 's3'"
+          no_output_timeout: 30m
+      - run:
+          name: Create or update CloudFront distribution
+          command: |
+            sed -i 's|{{ DEPLOY_URI }}|'${DEPLOY_URI}'|g' .aws/config/cloudfront.json
+            sed -i 's|{{ DEPLOY_STACK }}|'${DEPLOY_STACK}-s3'|g' .aws/config/cloudfront.json
+            (aws cloudformation create-stack --stack-name "${DEPLOY_STACK}-cloudfront" --template-body "file://.aws/templates/cloudfront.template" --parameters "file://.aws/config/cloudfront.json" --region us-east-1 \
+                && aws cloudformation wait stack-create-complete --stack-name "${DEPLOY_STACK}-cloudfront" --region us-east-1) \
+            || (aws cloudformation update-stack --stack-name "${DEPLOY_STACK}-cloudfront" --template-body "file://.aws/templates/cloudfront.template" --parameters "file://.aws/config/cloudfront.json" --region us-east-1 \
+                && aws cloudformation wait stack-update-complete --stack-name "${DEPLOY_STACK}-cloudfront" --region us-east-1) \
+            || echo "SKIPPING create & update of 'cloudfront'"
+          no_output_timeout: 1h
+      - run:
+          name: Sync assets to S3
+          command: aws s3 sync assets s3://${DEPLOY_URI} --delete --region us-east-1 --cache-control max-age=2592000,public
+      - run:
+          name: Invalidate CloudFront caches
+          command: aws cloudfront create-invalidation --distribution-id `aws cloudformation list-stack-resources --stack-name "${DEPLOY_STACK}-cloudfront" --region us-east-1 | python -c 'import sys; import json; res=json.loads(sys.stdin.read()); print(res["StackResourceSummaries"][1]["PhysicalResourceId"])'` --paths '/*'  --region us-east-1
+
+workflows:
+  version: 2
+  deploy:
+    jobs:
+      - deploy:
+          context: cdn-production
+          filters:
+            branches:
+              only: /^(master)$/
